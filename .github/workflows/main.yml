@@ -1,0 +1,210 @@
+﻿name: DevSecOps Pipeline  ECS on EC2
+
+# 
+# Trigger: environment-scoped release tags only
+#
+#   dev/v1.0.0    deploys to dev environment
+#   prod/v1.0.0   deploys to prod environment
+#
+# To trigger:
+#   git tag dev/v1.0.0 && git push origin dev/v1.0.0
+#   git tag prod/v1.0.0 && git push origin prod/v1.0.0
+#
+# Job execution order:
+#   TEST - BUILD_AND_PUBLISH - DEPLOY
+# 
+
+on:
+  push:
+    tags:
+      - 'dev/v*.*.*'
+      - 'prod/v*.*.*'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:     ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY:   ${{ secrets.REGISTRY }}
+  IMAGE_NAME:       petclinic
+  ECS_CLUSTER:      petclinic-cluster
+  ECS_SERVICE:      petclinic-svc
+  TASK_FAMILY:      petclinic
+  CONTAINER_NAME:   petclinic-app
+  # Derives "dev" or "prod" from the tag prefix (dev/v1.0.0  dev)
+  APP_ENV:        ${{ startsWith(github.ref_name, 'prod/') && 'prod' || 'dev' }}
+
+jobs:
+  # 
+  # JOB 1  Test, SAST, Quality Gate
+  # 
+  TEST:
+    name: Test & SonarCloud Quality Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run Maven tests
+        run: mvn clean test
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+
+      - name: SonarCloud Scan & Quality Gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B -U sonar:sonar \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.sources=src/main/java \
+            -Dsonar.java.binaries=target/classes \
+            -Dsonar.junit.reportsPath=target/surefire-reports/ \
+            -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+            -Dsonar.qualitygate.wait=true
+
+  # --------------------------------------------------------------------------
+  # JOB 2 — Build Docker Image, Trivy Scan, Push to ECR
+  # Flyway runs migrations inside the container on startup — no separate job needed.
+  # --------------------------------------------------------------------------
+  BUILD_AND_PUBLISH:
+    name: Build, Scan & Publish to ECR
+    runs-on: ubuntu-latest
+    needs: TEST
+    outputs:
+      image_tag: ${{ steps.build-image.outputs.image_tag }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Package application JAR
+        run: mvn package -DskipTests -B --no-transfer-progress
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        id: build-image
+        run: |
+          # Strip env prefix from tag: dev/v1.0.0  v1.0.0, then prepend env: dev-v1.0.0
+          VERSION=${GITHUB_REF_NAME#*/}
+          IMAGE_TAG=${{ env.APP_ENV }}-${VERSION}
+          docker build -t $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG $ECR_REGISTRY/$IMAGE_NAME:${{ env.APP_ENV }}-latest
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Run Trivy vulnerability scan (CRITICAL gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.build-image.outputs.image_tag }}
+          format: 'json'
+          output: 'trivy-report.json'
+          exit-code: '1'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+
+      - name: Trivy human-readable summary (always visible in log)
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.build-image.outputs.image_tag }}
+          format: 'table'
+          severity: 'CRITICAL'
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Upload Trivy audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ steps.build-image.outputs.image_tag }}
+          path: trivy-report.json
+
+      - name: Push image to ECR (only if Trivy gate passes)
+        run: |
+          docker push $ECR_REGISTRY/$IMAGE_NAME:${{ steps.build-image.outputs.image_tag }}
+          docker push $ECR_REGISTRY/$IMAGE_NAME:${{ env.APP_ENV }}-latest
+
+  # 
+  # JOB 4  Deploy to ECS on EC2
+  # 
+  DEPLOY:
+    name: Deploy to ECS (EC2 Launch Type)
+    runs-on: ubuntu-latest
+    needs: BUILD_AND_PUBLISH
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download live task definition from ECS
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_FAMILY }} \
+            --query taskDefinition \
+            > infra/taskdeffile.json
+
+      - name: Fill new image ID into ECS Task Definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: infra/taskdeffile.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.BUILD_AND_PUBLISH.outputs.image_tag }}
+
+      - name: Deploy ECS service with updated task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 5
+
+      - name: Deployment summary
+        run: |
+          echo "Environment:  ${{ env.APP_ENV }}"
+          echo "Tag:          ${{ github.ref_name }}"
+          echo "Image:        ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.BUILD_AND_PUBLISH.outputs.image_tag }}"
+          echo "ECS Service:  ${{ env.ECS_SERVICE }}"
+          echo "Cluster:      ${{ env.ECS_CLUSTER }}"
+          echo "Health check: /actuator/health"

@@ -1,0 +1,68 @@
+{
+  "family": "petclinic",
+  "networkMode": "bridge",
+  "requiresCompatibilities": ["EC2"],
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/petclinic-ecs-task-execution-role",
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "petclinic-app",
+      "image": "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/petclinic:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 0,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SPRING_PROFILES_ACTIVE",
+          "value": "mysql"
+        },
+        {
+          "name": "MYSQL_URL",
+          "value": "jdbc:mysql://YOUR_RDS_ENDPOINT.rds.amazonaws.com:3306/petclinic?createDatabaseIfNotExist=true&useSSL=true&requireSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "MYSQL_USER",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:dev/app/rds:RDS_USER::"
+        },
+        {
+          "name": "MYSQL_PASS",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:dev/app/rds:RDS_PASS::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/petclinic-cluster",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8080/actuator/health || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      },
+      "mountPoints": [],
+      "volumesFrom": []
+    }
+  ],
+  "volumes": [],
+  "tags": [
+    { "key": "Project",     "value": "petclinic" },
+    { "key": "Environment", "value": "dev" },
+    { "key": "ManagedBy",   "value": "terraform" }
+  ]
+}

@@ -59,10 +59,10 @@ variable "ecs_service_name" {
 variable "ec2_instance_type" {
   description = "EC2 instance type for ECS container instances. t3.medium provides 4 GiB RAM — required to run a Spring Boot JVM task (2048 MiB) with headroom for the OS and ECS agent."
   type        = string
-  default     = "t3.medium"
+  default     = "t3.micro"
 
   validation {
-    condition     = contains(["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge"], var.ec2_instance_type)
+    condition     = contains(["t3.micro"], var.ec2_instance_type)
     error_message = "Instance type must be t3.medium or larger. t3.small cannot fit a 2048 MiB ECS task alongside OS and ECS agent overhead."
   }
 }

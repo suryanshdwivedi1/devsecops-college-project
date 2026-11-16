@@ -28,8 +28,8 @@ terraform {
 
   # -- Remote State ----------------------------------------------------------
   backend "s3" {
-    bucket       = "petclinic-tfstate-997450571655"
-    key          = "dev/ecs-ec2-pipeline.tfstate"
+    bucket       = "akhil-tfstate-035308876165"
+    key          = "dev/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true   # Native S3 locking - no DynamoDB required (>= 1.11.0)

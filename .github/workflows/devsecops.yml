@@ -93,11 +93,18 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
+      - name: Deploy to Amazon ECS
+        run: |
+          aws ecs update-service \
+            --cluster devsecops-live-cluster \
+            --service devsecops-live-service \
+            --force-new-deployment
+
       - name: Send Discord Alert on Successful Deployment
         if: success()
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           curl -H "Content-Type: application/json" \
-          -d '{"content": "✅ **DEPLOYMENT SUCCESS:** `my-demo-app` passed Trivy security scan with zero Critical/High CVEs and was pushed to AWS ECR!"}' \
+          -d '{"content": "✅ **DEPLOYMENT SUCCESS:** `my-demo-app` passed Trivy security scan and was deployed live to AWS ECS!"}' \
           $DISCORD_WEBHOOK

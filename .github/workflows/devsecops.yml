@@ -18,12 +18,12 @@ jobs:
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'my-demo-app'
-          format: 'table'
-          exit-code: '1'
+          image-ref: "my-demo-app"
+          format: "table"
+          exit-code: "1"
           ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
 
       - name: Send Discord Alert on Pipeline Block
         if: failure()
@@ -32,4 +32,35 @@ jobs:
         run: |
           curl -H "Content-Type: application/json" \
           -d '{"content": "🚨 **SECURITY ALERT:** Critical/High vulnerabilities detected in `my-demo-app`! The CI/CD pipeline has been **BLOCKED** before AWS deployment."}' \
+          $DISCORD_WEBHOOK
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and Push Image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: petclinic
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag my-demo-app $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag my-demo-app $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Send Discord Alert on Successful Deployment
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d '{"content": "✅ **DEPLOYMENT SUCCESS:** `my-demo-app` passed Trivy security scan with zero Critical/High CVEs and was pushed to AWS ECR!"}' \
           $DISCORD_WEBHOOK

@@ -97,7 +97,7 @@ jobs:
         run: |
           aws ecs update-service \
             --cluster devsecops-live-cluster \
-            --service devsecops-live-service \
+            --service devsecops-app-task-service-7hay9jm1 \
             --force-new-deployment
 
       - name: Send Discord Alert on Successful Deployment

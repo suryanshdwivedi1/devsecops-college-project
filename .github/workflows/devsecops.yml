@@ -18,22 +18,37 @@ jobs:
       - name: Build Docker Image
         run: docker build -t my-demo-app .
 
+      - name: Generate SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: "my-demo-app"
+          format: "cyclonedx"
+          output: "sbom.cdx.json"
+          exit-code: "0"
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-sbom
+          path: sbom.cdx.json
+          retention-days: 30
+
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: 'my-demo-app'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '1'
+          image-ref: "my-demo-app"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          exit-code: "1"
           ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
 
       - name: Upload Trivy Scan Results to GitHub Security Tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
 
       - name: Send Discord Alert on Pipeline Block
         if: failure()

@@ -1,7 +1,7 @@
 FROM node:14-alpine
 
 # Patch all Alpine OS packages to latest security fixes
-RUN apk update && apk upgrade --no-cache
+# RUN apk update && apk upgrade --no-cache
 
 ARG GIT_SHA=local-dev
 ENV GIT_SHA=${GIT_SHA}

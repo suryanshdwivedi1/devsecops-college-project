@@ -108,3 +108,4 @@ jobs:
           curl -H "Content-Type: application/json" \
           -d '{"content": "✅ **DEPLOYMENT SUCCESS:** `my-demo-app` passed Trivy security scan and was deployed live to AWS ECS!"}' \
           $DISCORD_WEBHOOK
+          
